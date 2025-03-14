@@ -1,8 +1,70 @@
 // Solar Energy Estimator Application
 
+// API Integration for real world data
+const ApiUtils = {
+  // NREL API key - normally would be stored securely, but for demo purposes
+  nrelApiKey: "DEMO_KEY",
+  
+  // OpenCage Geocoding API key - normally would be stored securely
+  geocodingApiKey: "77c8845a85cc43c1b91fd62a51ff32bd",
+  
+  // Geocode address to get latitude/longitude using OpenCage Geocoding API
+  geocodeAddress: async (address) => {
+    try {
+      const encodedAddress = encodeURIComponent(address);
+      const response = await axios.get(`https://api.opencagedata.com/geocode/v1/json?q=${encodedAddress}&key=${ApiUtils.geocodingApiKey}`);
+      
+      if (response.data && response.data.results && response.data.results.length > 0) {
+        const result = response.data.results[0];
+        return {
+          lat: result.geometry.lat,
+          lng: result.geometry.lng,
+          formattedAddress: result.formatted
+        };
+      } else {
+        throw new Error("No geocoding results found");
+      }
+    } catch (error) {
+      console.error("Geocoding error:", error);
+      
+      // Fallback to mock data in case of API failure
+      return SolarUtils.mockGeocodeAddress(address);
+    }
+  },
+  
+  // Get solar resource data from NREL's API
+  getSolarResource: async (lat, lng) => {
+    try {
+      const response = await axios.get(
+        `https://developer.nrel.gov/api/solar/solar_resource/v1.json?api_key=${ApiUtils.nrelApiKey}&lat=${lat}&lon=${lng}`
+      );
+      
+      if (response.data && response.data.outputs) {
+        // Extract monthly averages from the API response
+        const avgDni = response.data.outputs.avg_dni.monthly;
+        const avgGhi = response.data.outputs.avg_ghi.monthly;
+        
+        // Return monthly solar radiation data (we'll use GHI - Global Horizontal Irradiance)
+        return {
+          // API returns data as object with keys 1-12, convert to array
+          monthlyRadiation: Object.values(avgGhi),
+          annualAverage: response.data.outputs.avg_ghi.annual
+        };
+      } else {
+        throw new Error("No solar resource data found");
+      }
+    } catch (error) {
+      console.error("Solar resource API error:", error);
+      
+      // Fallback to calculated values in case of API failure
+      return null;
+    }
+  }
+};
+
 // Utility functions for solar calculations
 const SolarUtils = {
-  // Estimate solar radiation based on latitude and time of year
+  // Backup method: Estimate solar radiation based on latitude and time of year
   estimateSolarRadiation: (latitude, month) => {
     // This is a simplified model based on latitude and month
     const baseRadiation = 5.0; // kWh/m²/day base value
@@ -32,16 +94,17 @@ const SolarUtils = {
   },
   
   // Calculate monthly energy generation for a full year
-  calculateAnnualGeneration: (latitude, systemSizeKW) => {
+  calculateAnnualGeneration: (latitude, systemSizeKW, monthlyRadiation = null) => {
     const monthlyData = [];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     
     let annualTotal = 0;
     
     for (let i = 0; i < 12; i++) {
-      const radiation = SolarUtils.estimateSolarRadiation(latitude, i);
-      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][i];
-      const monthlyGeneration = SolarUtils.calculateEnergyGeneration(systemSizeKW, radiation) * daysInMonth;
+      // Use either API data or calculated radiation
+      const radiation = monthlyRadiation ? monthlyRadiation[i] : SolarUtils.estimateSolarRadiation(latitude, i);
+      const monthlyGeneration = SolarUtils.calculateEnergyGeneration(systemSizeKW, radiation) * daysInMonth[i];
       
       annualTotal += monthlyGeneration;
       
@@ -70,11 +133,9 @@ const SolarUtils = {
     return (kwhGenerated * electricityPrice).toFixed(2);
   },
   
-  // Geocode address to get latitude/longitude using a mock function
-  // In a real app, this would connect to a geocoding API
-  geocodeAddress: async (address) => {
+  // Mock geocode function as fallback when API fails
+  mockGeocodeAddress: (address) => {
     // For demo purposes, return mock data based on city names
-    // In a production app, use a real geocoding service
     const cityCoordinates = {
       'new york': { lat: 40.7128, lng: -74.0060 },
       'los angeles': { lat: 34.0522, lng: -118.2437 },
@@ -98,12 +159,19 @@ const SolarUtils = {
     
     for (const city in cityCoordinates) {
       if (lowercaseAddress.includes(city)) {
-        return cityCoordinates[city];
+        return {
+          ...cityCoordinates[city],
+          formattedAddress: address
+        };
       }
     }
     
     // Default fallback if no city is found (use a central US location)
-    return { lat: 39.8283, lng: -98.5795 };
+    return { 
+      lat: 39.8283, 
+      lng: -98.5795,
+      formattedAddress: address
+    };
   }
 };
 
@@ -112,13 +180,17 @@ const AddressForm = ({ onSubmit, loading }) => {
   const [address, setAddress] = React.useState('');
   const [systemSize, setSystemSize] = React.useState(5);
   const [electricityPrice, setElectricityPrice] = React.useState(0.15);
+  const [roofAngle, setRoofAngle] = React.useState(30);
+  const [orientation, setOrientation] = React.useState('south');
   
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit({
       address,
       systemSize: parseFloat(systemSize),
-      electricityPrice: parseFloat(electricityPrice)
+      electricityPrice: parseFloat(electricityPrice),
+      roofAngle: parseInt(roofAngle, 10),
+      orientation
     });
   };
   
@@ -174,6 +246,49 @@ const AddressForm = ({ onSubmit, loading }) => {
             step="0.01"
             required
           />
+        </div>
+        
+        <div>
+          <label htmlFor="roofAngle" className="block text-sm font-medium text-gray-700">
+            Roof Angle (degrees)
+          </label>
+          <input
+            type="range"
+            id="roofAngle"
+            className="mt-1 block w-full"
+            value={roofAngle}
+            onChange={(e) => setRoofAngle(e.target.value)}
+            min="0"
+            max="60"
+            step="5"
+          />
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>0° (Flat)</span>
+            <span>{roofAngle}°</span>
+            <span>60° (Steep)</span>
+          </div>
+        </div>
+        
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Roof Orientation
+          </label>
+          <div className="grid grid-cols-4 gap-2">
+            {['north', 'east', 'south', 'west'].map((dir) => (
+              <button
+                key={dir}
+                type="button"
+                className={`py-2 px-4 border rounded-md text-sm capitalize ${
+                  orientation === dir
+                    ? 'bg-blue-600 border-blue-700 text-white'
+                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+                onClick={() => setOrientation(dir)}
+              >
+                {dir}
+              </button>
+            ))}
+          </div>
         </div>
         
         <button
@@ -274,8 +389,12 @@ const ResultsDisplay = ({ results }) => {
       
       <div className="mb-6">
         <h3 className="text-lg font-semibold mb-2">Location Information</h3>
+        <p><span className="font-medium">Address:</span> {results.formattedAddress}</p>
         <p><span className="font-medium">Latitude:</span> {results.latitude}°</p>
         <p><span className="font-medium">Estimated Average Solar Radiation:</span> {results.averageRadiation} kWh/m²/day</p>
+        <p><span className="font-medium">Roof Orientation:</span> <span className="capitalize">{results.orientation}</span></p>
+        <p><span className="font-medium">Roof Angle:</span> {results.roofAngle}°</p>
+        <p className="text-xs text-gray-500 mt-2">{results.dataSource}</p>
       </div>
       
       <div>
@@ -312,8 +431,8 @@ const ResultsDisplay = ({ results }) => {
       </div>
       
       <div className="mt-6 text-sm text-gray-600">
-        <p><strong>Note:</strong> These estimates are based on simplified calculations and may vary from actual production. 
-        Factors such as shading, panel orientation, and local weather patterns will affect real-world results.</p>
+        <p><strong>Note:</strong> These estimates are based on {results.apiData ? 'real world solar radiation data' : 'simplified calculations'} and may vary from actual production. 
+        Factors such as shading, specific panel efficiency, and local weather patterns will affect real-world results.</p>
       </div>
     </div>
   );
@@ -331,10 +450,32 @@ const App = () => {
       setError(null);
       
       // Geocode the address to get latitude/longitude
-      const geoData = await SolarUtils.geocodeAddress(formData.address);
+      const geoData = await ApiUtils.geocodeAddress(formData.address);
+      
+      // Try to get solar resource data from NREL API
+      let solarData = null;
+      let monthlyRadiation = null;
+      let dataSource = "Calculated estimates based on location and time of year";
+      let apiData = false;
+      
+      try {
+        solarData = await ApiUtils.getSolarResource(geoData.lat, geoData.lng);
+        if (solarData) {
+          monthlyRadiation = solarData.monthlyRadiation;
+          dataSource = "NREL Solar Resource Data API";
+          apiData = true;
+        }
+      } catch (apiError) {
+        console.warn("Using fallback solar calculations:", apiError);
+      }
+      
+      // Apply adjustments for roof orientation and angle
+      const orientationFactor = getOrientationFactor(formData.orientation);
+      const angleFactor = getAngleFactor(formData.roofAngle);
+      const adjustmentFactor = orientationFactor * angleFactor;
       
       // Calculate solar generation based on location and system size
-      const generationData = SolarUtils.calculateAnnualGeneration(geoData.lat, formData.systemSize);
+      const generationData = SolarUtils.calculateAnnualGeneration(geoData.lat, formData.systemSize * adjustmentFactor, monthlyRadiation);
       
       // Calculate CO2 offset and savings
       const co2Offset = SolarUtils.estimateCO2Offset(generationData.annualTotal);
@@ -351,7 +492,12 @@ const App = () => {
         annualSavings,
         latitude: geoData.lat.toFixed(4),
         longitude: geoData.lng.toFixed(4),
-        averageRadiation
+        formattedAddress: geoData.formattedAddress,
+        averageRadiation,
+        orientation: formData.orientation,
+        roofAngle: formData.roofAngle,
+        dataSource,
+        apiData
       });
     } catch (err) {
       setError('Error calculating solar potential. Please try again.');
@@ -361,11 +507,33 @@ const App = () => {
     }
   };
   
+  // Helper function to adjust for roof orientation
+  const getOrientationFactor = (orientation) => {
+    const factors = {
+      'south': 1.0,   // Optimal
+      'east': 0.85,   // Good morning sun
+      'west': 0.85,   // Good afternoon sun
+      'north': 0.65   // Poorest for northern hemisphere
+    };
+    return factors[orientation] || 1.0;
+  };
+  
+  // Helper function to adjust for roof angle
+  const getAngleFactor = (angle) => {
+    // Assume optimal angle is latitude-dependent (simplified)
+    // For this demo, we'll say 30° is optimal
+    const optimalAngle = 30;
+    const angleDiff = Math.abs(angle - optimalAngle);
+    
+    // Less efficient as we move away from optimal, with a floor of 70% efficiency
+    return Math.max(1 - (angleDiff * 0.01), 0.7);
+  };
+  
   return (
     <div className="container mx-auto py-8 px-4">
       <header className="text-center mb-8">
         <h1 className="text-4xl font-bold text-blue-900">Solar Energy Estimator</h1>
-        <p className="text-gray-600 mt-2">Estimate your potential solar energy production and savings</p>
+        <p className="text-gray-600 mt-2">Estimate your potential solar energy production and savings using real-world data</p>
       </header>
       
       <div className="max-w-6xl mx-auto">
@@ -410,7 +578,8 @@ const App = () => {
       
       <footer className="mt-16 text-center text-gray-500 text-sm">
         <p>© {new Date().getFullYear()} Solar Energy Estimator | Demo Application</p>
-        <p className="mt-1">Note: This is a demonstration using simplified calculations and should not be used for actual solar installation planning.</p>
+        <p className="mt-1">Data powered by OpenCage Geocoding API and NREL's Solar Resource Data API</p>
+        <p className="mt-1">Note: This application is for educational purposes and preliminary estimates only.</p>
       </footer>
     </div>
   );
