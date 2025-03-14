@@ -106,3 +106,315 @@ const SolarUtils = {
     return { lat: 39.8283, lng: -98.5795 };
   }
 };
+
+// AddressForm Component
+const AddressForm = ({ onSubmit, loading }) => {
+  const [address, setAddress] = React.useState('');
+  const [systemSize, setSystemSize] = React.useState(5);
+  const [electricityPrice, setElectricityPrice] = React.useState(0.15);
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmit({
+      address,
+      systemSize: parseFloat(systemSize),
+      electricityPrice: parseFloat(electricityPrice)
+    });
+  };
+  
+  return (
+    <div className="bg-white p-6 rounded-lg shadow-md">
+      <h2 className="text-2xl font-bold mb-4 text-blue-800">Enter Your Details</h2>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="address" className="block text-sm font-medium text-gray-700">
+            Address or City
+          </label>
+          <input
+            type="text"
+            id="address"
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
+            placeholder="Enter your address or city"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            required
+          />
+        </div>
+        
+        <div>
+          <label htmlFor="systemSize" className="block text-sm font-medium text-gray-700">
+            Solar System Size (kW)
+          </label>
+          <input
+            type="number"
+            id="systemSize"
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
+            value={systemSize}
+            onChange={(e) => setSystemSize(e.target.value)}
+            min="1"
+            max="50"
+            step="0.5"
+            required
+          />
+          <p className="text-xs text-gray-500 mt-1">Typical residential systems range from 3kW to 10kW</p>
+        </div>
+        
+        <div>
+          <label htmlFor="electricityPrice" className="block text-sm font-medium text-gray-700">
+            Electricity Price ($/kWh)
+          </label>
+          <input
+            type="number"
+            id="electricityPrice"
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
+            value={electricityPrice}
+            onChange={(e) => setElectricityPrice(e.target.value)}
+            min="0.05"
+            max="1"
+            step="0.01"
+            required
+          />
+        </div>
+        
+        <button
+          type="submit"
+          className={`w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white solar-gradient focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 
+            ${loading ? 'opacity-75 cursor-not-allowed' : ''}`}
+          disabled={loading}
+        >
+          {loading ? 'Calculating...' : 'Calculate Solar Potential'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+// Results Component
+const ResultsDisplay = ({ results }) => {
+  const chartRef = React.useRef(null);
+  const [chart, setChart] = React.useState(null);
+  
+  React.useEffect(() => {
+    if (!results || !results.monthlyData) return;
+    
+    // Prepare chart data
+    const labels = results.monthlyData.map(item => item.month);
+    const data = results.monthlyData.map(item => parseFloat(item.generation));
+    
+    if (chart) {
+      chart.destroy();
+    }
+    
+    const ctx = chartRef.current.getContext('2d');
+    const newChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Monthly Energy Generation (kWh)',
+          data: data,
+          backgroundColor: 'rgba(54, 162, 235, 0.6)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: {
+            display: true,
+            text: 'Monthly Solar Energy Generation'
+          },
+          legend: {
+            position: 'top',
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Energy (kWh)'
+            }
+          }
+        }
+      }
+    });
+    
+    setChart(newChart);
+    
+    // Cleanup function
+    return () => {
+      newChart.destroy();
+    };
+  }, [results]);
+  
+  if (!results) return null;
+  
+  return (
+    <div className="bg-white p-6 rounded-lg shadow-md">
+      <h2 className="text-2xl font-bold mb-4 text-blue-800">Solar Energy Estimate Results</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-blue-50 p-4 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-blue-900">Annual Generation</h3>
+          <p className="text-3xl font-bold text-blue-700">{results.annualTotal} kWh</p>
+        </div>
+        
+        <div className="bg-green-50 p-4 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-green-900">Annual Savings</h3>
+          <p className="text-3xl font-bold text-green-700">${results.annualSavings}</p>
+        </div>
+        
+        <div className="bg-yellow-50 p-4 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-yellow-900">CO₂ Offset</h3>
+          <p className="text-3xl font-bold text-yellow-700">{results.co2Offset} kg</p>
+        </div>
+      </div>
+      
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold mb-2">Location Information</h3>
+        <p><span className="font-medium">Latitude:</span> {results.latitude}°</p>
+        <p><span className="font-medium">Estimated Average Solar Radiation:</span> {results.averageRadiation} kWh/m²/day</p>
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Monthly Generation</h3>
+        <div className="h-64">
+          <canvas ref={chartRef}></canvas>
+        </div>
+      </div>
+      
+      <div className="mt-6">
+        <h3 className="text-lg font-semibold mb-2">Monthly Breakdown</h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Month</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Solar Radiation (kWh/m²/day)</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Generation (kWh)</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Generation (kWh)</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {results.monthlyData.map((item, index) => (
+                <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.month}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.radiation}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.daily}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.generation}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <div className="mt-6 text-sm text-gray-600">
+        <p><strong>Note:</strong> These estimates are based on simplified calculations and may vary from actual production. 
+        Factors such as shading, panel orientation, and local weather patterns will affect real-world results.</p>
+      </div>
+    </div>
+  );
+};
+
+// Main App Component
+const App = () => {
+  const [results, setResults] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  
+  const handleFormSubmit = async (formData) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Geocode the address to get latitude/longitude
+      const geoData = await SolarUtils.geocodeAddress(formData.address);
+      
+      // Calculate solar generation based on location and system size
+      const generationData = SolarUtils.calculateAnnualGeneration(geoData.lat, formData.systemSize);
+      
+      // Calculate CO2 offset and savings
+      const co2Offset = SolarUtils.estimateCO2Offset(generationData.annualTotal);
+      const annualSavings = SolarUtils.estimateSavings(generationData.annualTotal, formData.electricityPrice);
+      
+      // Calculate average solar radiation
+      const totalRadiation = generationData.monthlyData.reduce((sum, month) => sum + parseFloat(month.radiation), 0);
+      const averageRadiation = (totalRadiation / 12).toFixed(2);
+      
+      // Set the results
+      setResults({
+        ...generationData,
+        co2Offset,
+        annualSavings,
+        latitude: geoData.lat.toFixed(4),
+        longitude: geoData.lng.toFixed(4),
+        averageRadiation
+      });
+    } catch (err) {
+      setError('Error calculating solar potential. Please try again.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <div className="container mx-auto py-8 px-4">
+      <header className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-blue-900">Solar Energy Estimator</h1>
+        <p className="text-gray-600 mt-2">Estimate your potential solar energy production and savings</p>
+      </header>
+      
+      <div className="max-w-6xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-1">
+            <AddressForm onSubmit={handleFormSubmit} loading={loading} />
+          </div>
+          
+          <div className="lg:col-span-2">
+            {error && (
+              <div className="bg-red-50 p-4 rounded-lg shadow-md text-red-700 mb-4">
+                {error}
+              </div>
+            )}
+            
+            {loading ? (
+              <div className="bg-white p-6 rounded-lg shadow-md text-center">
+                <p className="text-lg text-gray-600">Calculating solar potential...</p>
+                <div className="mt-4 flex justify-center">
+                  <svg className="animate-spin h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </div>
+              </div>
+            ) : results ? (
+              <ResultsDisplay results={results} />
+            ) : (
+              <div className="bg-white p-6 rounded-lg shadow-md text-center">
+                <div className="text-gray-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-20 w-20 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-xl text-gray-600 mt-4">Enter your address to calculate your solar potential</h3>
+                <p className="text-gray-500 mt-2">Get an estimate of how much energy solar panels could generate at your location</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      <footer className="mt-16 text-center text-gray-500 text-sm">
+        <p>© {new Date().getFullYear()} Solar Energy Estimator | Demo Application</p>
+        <p className="mt-1">Note: This is a demonstration using simplified calculations and should not be used for actual solar installation planning.</p>
+      </footer>
+    </div>
+  );
+};
+
+// Render the app
+ReactDOM.render(<App />, document.getElementById('root'));
